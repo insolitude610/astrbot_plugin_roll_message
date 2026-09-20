@@ -1,0 +1,27 @@
+{
+  "permission_mode": {
+    "description": "谁可以使用 /roll",
+    "type": "string",
+    "options": ["admin", "everyone"],
+    "default": "admin",
+    "hint": "admin=仅 AstrBot 管理员（admins_id 中的用户）可用，其他用户静默忽略；everyone=任何人可用（注意：每次 /roll 都是一次真实的 LLM 调用，会消耗 token）"
+  },
+  "recall_old": {
+    "description": "是否撤回被替代的旧回复",
+    "type": "bool",
+    "default": true,
+    "hint": "仅 QQ(aiocqhttp：NapCat / Lagrange / LLOneBot / go-cqhttp) 支持。其它平台会自动跳过且不会报错；撤回失败（如超过 QQ 撤回时间窗）同样静默降级"
+  },
+  "cooldown_seconds": {
+    "description": "同一会话两次 /roll 的最小间隔（秒）",
+    "type": "int",
+    "default": 3,
+    "hint": "0 表示不限制。生成过程中重复发送 /roll 也会被忽略"
+  },
+  "show_tip_when_no_reply": {
+    "description": "没有可重新生成的回复时，是否回复提示消息",
+    "type": "bool",
+    "default": true,
+    "hint": "关闭后 /roll 在无可重生成内容时完全静默"
+  }
+}

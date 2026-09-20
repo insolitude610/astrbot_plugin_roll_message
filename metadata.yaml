@@ -1,0 +1,18 @@
+name: astrbot_plugin_roll
+display_name: 重新生成 (/roll)
+desc: 输入 /roll 重新生成上一条回复；QQ(aiocqhttp) 下尽力撤回旧的平台消息，其它平台自动跳过。支持管理员/所有人权限切换。
+author: insolitude610
+version: 1.0.0
+repo: https://github.com/insolitude610/Astrbot_plugin_roll_message
+astrbot_version: ">=4.5.0"
+support_platforms:
+  - aiocqhttp
+  - telegram
+  - discord
+  - slack
+  - lark
+  - kook
+  - qq_official
+  - wecom
+  - dingtalk
+  - webchat
