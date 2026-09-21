@@ -1,6 +1,7 @@
 name: astrbot_plugin_roll
 display_name: 重新生成 (/roll)
-desc: 输入 /roll 重新生成上一条回复；QQ(aiocqhttp) 下尽力撤回旧的平台消息，其它平台自动跳过。支持管理员/所有人权限切换。
+short_desc: 发一条 /roll 换掉 bot 上一条回复，QQ 下顺手撤回旧消息。
+desc: 不满意 bot 的回复就发一个 /roll：插件会用同一段上下文重走一遍正常的回复流程（人格、工具、知识库、流式、转图/TTS 都在），QQ(aiocqhttp) 下还会撤回旧的平台消息，其它平台自动跳过。支持管理员 / 所有人权限切换。
 author: insolitude610
 version: 1.0.0
 repo: https://github.com/insolitude610/Astrbot_plugin_roll_message
@@ -16,3 +17,11 @@ support_platforms:
   - wecom
   - dingtalk
   - webchat
+tags:
+  - 重新生成
+  - roll
+  - 撤回
+  - QQ
+social_link: https://github.com/insolitude610
+# 头图：插件市场和 WebUI 读的是插件根目录的 logo.png（AstrBot 固定文件名，1:1），
+# 别改名；README 顶部的动图是 assets/logo.gif，同一张图的动画版。
