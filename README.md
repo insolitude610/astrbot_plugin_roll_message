@@ -34,7 +34,7 @@ QQ（aiocqhttp）下旧的那条平台消息会被顺手撤回。框架本身没
 
 ```bash
 cd AstrBot/data/plugins
-git clone https://github.com/insolitude610/Astrbot_plugin_roll_message.git astrbot_plugin_roll
+git clone https://github.com/insolitude610/astrbot_plugin_roll_message.git astrbot_plugin_roll
 ```
 
 目录名留成 `astrbot_plugin_roll`，然后到 WebUI 插件页点一下「重载插件」。
