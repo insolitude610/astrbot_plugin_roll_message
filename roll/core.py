@@ -70,7 +70,8 @@ class _Prepared:
     audio_urls: list
     cid: str
     handles: list
-    recall_key: tuple | None = None
+    #: Every store key consulted for the handles, so all of them are forgotten.
+    recall_keys: tuple = ()
 
 
 class _ConversationCopy:
@@ -295,7 +296,7 @@ class RollService:
             audio_urls=parsed.audio_urls,
             cid=cid,
             handles=snapshot[0],
-            recall_key=snapshot[1],
+            recall_keys=snapshot[1],
         )
         return prepared
 
@@ -305,20 +306,38 @@ class RollService:
         except Exception:
             return _ConversationCopy(conv, history_json)
 
-    def _snapshot(self, event: Any) -> tuple[list, tuple | None]:
-        """The burst of messages to withdraw, plus the key they were filed under."""
+    def _snapshot(self, event: Any) -> tuple[list, tuple]:
+        """The burst of messages to withdraw, plus the keys they were filed under.
+
+        Handles are filed per sending account, and the account of an event is
+        known, so the exact key is tried first.  Sends that carried no account
+        (aiocqhttp's generic ``bot.send(event)`` fallback and proactive pushes
+        drop ``self_id``) sit in the account-less bucket, which is only
+        consulted when the exact key is empty.
+        """
 
         try:
             group_id = event.get_group_id()
             is_group = bool(group_id)
             session_id = group_id if is_group else event.get_sender_id()
-            key = routing_key(event.get_platform_id(), is_group, session_id)
+            platform_id = event.get_platform_id()
+            self_id = _event_self_id(event)
         except Exception:
-            return [], None
-        try:
-            return self._store.snapshot(key), key
-        except Exception:
-            return [], None
+            return [], ()
+
+        keys = [routing_key(platform_id, is_group, session_id, self_id)]
+        account_less = routing_key(platform_id, is_group, session_id)
+        if account_less != keys[0]:
+            keys.append(account_less)
+
+        for key in keys:
+            try:
+                handles = self._store.snapshot(key)
+            except Exception:
+                continue
+            if handles:
+                return handles, tuple(keys)
+        return [], tuple(keys)
 
     # ------------------------------------------------------------------
     # request / tip construction
@@ -383,8 +402,8 @@ class RollService:
             # These ids have had their chance; a later /roll must not try to
             # delete an already-deleted message just because it is still inside
             # the burst window.
-            if prepared.recall_key is not None:
-                self._store.forget(prepared.recall_key)
+            for key in prepared.recall_keys:
+                self._store.forget(key)
 
     def _backend_for(self, event: Any) -> Any:
         try:
@@ -456,6 +475,18 @@ class RollService:
             getattr(self._logger, level)(f"astrbot_plugin_roll: {message}")
         except Exception:
             pass
+
+
+def _event_self_id(event: Any) -> Any:
+    """The account that received the event, or ``""`` when the event cannot say."""
+
+    getter = getattr(event, "get_self_id", None)
+    if not callable(getter):
+        return ""
+    try:
+        return getter()
+    except Exception:
+        return ""
 
 
 def _role(entry: Any) -> str:

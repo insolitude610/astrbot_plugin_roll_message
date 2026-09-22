@@ -82,7 +82,7 @@ entry[i] 变成 prompt：
 * 包装器是**完全直通**的：先 `await` 原件、返回值原样返回，记录写在裸 `try/except` 里（绝不影响发送）。
 * 幂等：重载时从 `bot._roll_orig_call_action` 取真原件再包一层，不叠加。
 * 只使用 `vars(bot)` 判断安装状态——因为 `getattr(bot, 任意名字)` 在 CQHttp 上永远不会返回 `None`（`__getattr__` 会伪造一个 partial）。
-* 键是 `(platform_id, group|private, str(session_id))`：两侧都归一化成字符串（发送侧是 int、事件侧是 str），并且只记录**本实例**发出的消息，多实例/多账号同群不会误删别人的消息。
+* 键是 `(platform_id, group|private, str(session_id), self_id)`：两侧都归一化成字符串（发送侧是 int、事件侧是 str），并且只记录**本实例**发出的消息，多实例/多账号同群不会误删别人的消息。第 4 位是**发消息的账号**——aiocqhttp 的 `WebSocketReverseApi.call_action` 在同一个适配器接了多个账号时靠 `self_id` 选择连接，没有它就只能抛 `ApiNotAvailable`，所以句柄必须记住账号并在 `delete_msg` 时带上。账号未知的发送（`bot.send(event)` 兜底路径、主动推送）落在 `self_id=""` 的无账号桶里，仅在精确键为空时才回退查询。
 * `terminate()` 还原原件。
 
 **撤回判定**（在 `yield` 之前、即收到 `/roll` 后立即执行）：
@@ -91,7 +91,7 @@ entry[i] 变成 prompt：
 recall_old 开启
 且 进入处理器时抓到了 handle 突发（≤3 条、以最新一条为锚的 2s 窗口，覆盖 TTS 语音+文字）
 且 平台 backend 支持撤回（aiocqhttp）
-→ 依次调用 bot.call_action("delete_msg", message_id=…)；每一次都单独 try/except，失败仅记日志
+→ 依次调用 bot.call_action("delete_msg", message_id=…, self_id=…)；每一次都单独 try/except，失败仅记日志（`ApiNotAvailable` 额外记一条 warning 说明多账号路由问题）
 ```
 
 判定之所以能这么简单，是因为此时生成还没发生：只要能走到这里，就说明权限/冷却/在途/会话锁都通过了，而且**确实找到了一轮可重生成的对话**（否则会走提示或静默分支，不撤回）。平台不支持时由 `NullBackend` 直接返回 `False`（一次 debug 日志）。
@@ -131,6 +131,7 @@ recall_old 开启
 8. **运行器前提**：`agent_runner.runner_type` 必须是 `local`（AstrBot 默认）；否则启动日志给出警告，历史写入由第三方运行器自行管理。
 9. **平台**：Telegram / Discord 等平台 v1 不实现撤回。
 10. **合成消息过滤**：框架注入的 `role=user` 提示词按已导入的常量与镜像的中文字面量过滤；若未来版本改动文案，理论上可能被当成用户的最后一轮——但由于插件不写库，其影响仅限那一次重生成。
+11. **账号未知的发送**：框架的 `bot.send(event)` 兜底路径与主动推送不携带 `self_id`，这类消息落在无账号桶里。单账号下照常可撤回；多账号下 `delete_msg` 无法路由（记一条 warning，消息保留）。
 
 ---
 
@@ -139,7 +140,7 @@ recall_old 开启
 ### 5.1 离线单测（不 import AstrBot，任意 OS 可跑）
 
 ```bash
-python -m pytest tests -q          # 73 passed
+python -m pytest tests -q          # 85 passed
 python -m compileall -q main.py roll tests
 ```
 
@@ -158,6 +159,7 @@ python -m compileall -q main.py roll tests
   NapCat 容器日志同一时间窗：`16:13:04 旧回复` → `16:13:09 收到 /roll` → `16:13:50 新回复`。
   即**撤回发生在收到指令后 0.26 秒、比新回复早 41 秒**；日志行号 `roll.core:416` 只存在于本修订版，可据此确认跑的就是被评审的代码。此外 `94 context entries`（此前为 110）说明框架的 `truncate_by_turns` 压缩已在生效——也就是过去会让撤回静默失效的那个条件。
 * **实测覆盖范围**：真机只覆盖了「私聊 + admin 模式 + 成功路径 + 可撤回平台」。提示分支、非管理员静默、冷却/在途静默、不支持撤回的平台均只有离线单测覆盖（见 5.1），未在真机上逐一走过。
+* **多账号修复的实测（1.0.1）**：真实 `aiocqhttp.CQHttp` + 真实 `WebSocketReverseApi`（两个会回应 `echo` 的模拟 OneBot 连接）下，账号 10001 的私聊回复落在键 `(platform_id, private, '456', '10001')`，`delete_msg` 精确送到 10001 的连接上；同样的调用在修复前抛 `ApiNotAvailable`。离线套件 85 passed（新增 8 项：按账号捕获、账号隔离、无账号回退、路由失败只 warning 一次）。
 
 ### 5.3 评审
 

@@ -17,7 +17,7 @@ from .roll.core import RollService
 from .roll.recall import RecallStore, make_backend
 
 PLUGIN_NAME = "astrbot_plugin_roll"
-PLUGIN_VERSION = "1.0.0"
+PLUGIN_VERSION = "1.0.1"
 PLUGIN_DESC = "输入 /roll 重新生成上一条回复；QQ(aiocqhttp) 下尽力撤回旧消息，其它平台自动跳过"
 PLUGIN_AUTHOR = "insolitude610"
 PLUGIN_REPO = "https://github.com/insolitude610/astrbot_plugin_roll_message"
@@ -100,13 +100,34 @@ class RollPlugin(Star):
         self._config = config if config is not None else {}
         self._store = RecallStore()
         self._backends: dict[str, Any] = {}
+
+        # Hard dependency: without it the conversation cannot be read at all.
+        # Report it instead of letting the plugin fail to load.
+        conv_mgr = getattr(context, "conversation_manager", None)
+        if conv_mgr is None:
+            logger.error(
+                f"{PLUGIN_NAME}: this AstrBot build exposes no "
+                "context.conversation_manager; /roll cannot read the conversation "
+                "and will stay silent.",
+            )
+
+        lock_factory = _make_lock_factory()
+        active_run_checker = _make_active_run_checker()
+        if lock_factory is None or active_run_checker is None:
+            logger.info(
+                f"{PLUGIN_NAME}: framework internals unavailable "
+                f"(session lock: {'found' if lock_factory else 'missing'}, "
+                f"active-run guard: {'found' if active_run_checker else 'missing'}); "
+                "/roll still works, with weaker concurrency protection.",
+            )
+
         self._service = RollService(
             config=self._config,
-            conv_mgr=context.conversation_manager,
+            conv_mgr=conv_mgr,
             store=self._store,
             backends=self._backends,
-            lock_factory=_make_lock_factory(),
-            active_run_checker=_make_active_run_checker(),
+            lock_factory=lock_factory,
+            active_run_checker=active_run_checker,
             logger=logger,
             synthetic_markers=_synthetic_markers(),
         )

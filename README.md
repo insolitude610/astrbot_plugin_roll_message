@@ -67,6 +67,7 @@ git clone https://github.com/insolitude610/astrbot_plugin_roll_message.git astrb
 
 ## 更新日志
 
+- **1.0.1** —— 多账号修复：撤回时带上消息所属的 `self_id`，一个 aiocqhttp 适配器下挂多个 QQ 号也能正确撤回；消息句柄按账号隔离，撤回无法路由时日志会说明原因。
 - **1.0.0** —— 首次发布。
 
 ## License

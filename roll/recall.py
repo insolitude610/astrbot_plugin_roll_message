@@ -7,7 +7,9 @@ message can only be done per platform.  This module provides:
 * :class:`RecallStore` - a small, timestamped, per-session record of the
   platform message ids this AstrBot instance has sent.
 * :class:`AiocqhttpBackend` - captures those ids for the ``aiocqhttp`` adapter
-  (NapCat / Lagrange / LLOneBot / go-cqhttp) and deletes them on request.
+  (NapCat / Lagrange / LLOneBot / go-cqhttp) and deletes them on request.  The
+  ids are filed per sending account, because one adapter can serve several QQ
+  accounts and ``delete_msg`` has to name the right one.
 * :class:`NullBackend` - silent degradation for every other platform.
 
 Nothing here imports AstrBot; the platform object is used through duck typing.
@@ -46,29 +48,51 @@ _DELETE_ACTION = "delete_msg"
 
 @dataclass(frozen=True)
 class RecallHandle:
-    """A platform message that may be withdrawn."""
+    """A platform message that may be withdrawn.
+
+    ``self_id`` is the account that sent it.  aiocqhttp keeps one client per
+    connected account and needs ``self_id`` on the API call to choose between
+    them, so a handle captured on a multi-account adapter stays routable.
+    """
 
     message_id: Any
+    self_id: Any = None
 
 
-def routing_key(platform_id: Any, is_group: bool, session_id: Any) -> tuple[str, str, str]:
+def routing_key(
+    platform_id: Any,
+    is_group: bool,
+    session_id: Any,
+    self_id: Any = None,
+) -> tuple[str, str, str, str]:
     """Build the key used to file sent messages.
 
     The identifiers are stringified because aiocqhttp passes ``group_id`` /
-    ``user_id`` as ``int`` while ``event.get_group_id()`` /
-    ``event.get_sender_id()`` return ``str``; normalising both sides is what
-    makes the capture side and the lookup side meet.
+    ``user_id`` / ``self_id`` as ``int`` while ``event.get_group_id()`` and
+    friends return ``str``; normalising both sides is what makes the capture
+    side and the lookup side meet.
+
+    The sending account is part of the key so that two QQ accounts sharing one
+    adapter never look at each other's messages.  It is optional: a caller that
+    does not know the account derives the same key as a capture that did not see
+    one either.
 
     Args:
         platform_id: Platform instance id (``PlatformMetadata.id``).
         is_group: Whether the session is a group chat.
         session_id: Group id or user id.
+        self_id: The OneBot account that sent the message, when known.
 
     Returns:
-        A hashable ``(platform_id, kind, session_id)`` tuple.
+        A hashable ``(platform_id, kind, session_id, self_id)`` tuple.
     """
 
-    return (str(platform_id), "group" if is_group else "private", str(session_id))
+    return (
+        str(platform_id),
+        "group" if is_group else "private",
+        str(session_id),
+        "" if self_id in (None, "") else str(self_id),
+    )
 
 
 class RecallStore:
@@ -118,7 +142,13 @@ class RecallStore:
             ((ts, mid) for ts, mid in entries if ts >= cutoff),
             key=lambda item: item[0],
         )
-        return [RecallHandle(message_id=mid) for _ts, mid in recent[-self._max_burst :]]
+        # The account rides along in the key, so every handle remembers which
+        # client has to receive the delete_msg.
+        self_id = key[3] if isinstance(key, tuple) and len(key) > 3 else ""
+        return [
+            RecallHandle(message_id=mid, self_id=self_id or None)
+            for _ts, mid in recent[-self._max_burst :]
+        ]
 
     def forget(self, key: tuple) -> None:
         self._data.pop(key, None)
@@ -174,6 +204,7 @@ class AiocqhttpBackend:
         self._store = store
         self._logger = logger
         self._platform_id = _platform_id_of(platform_inst)
+        self._routing_warned = False
 
     # -- lifecycle -----------------------------------------------------
     def install(self) -> None:
@@ -247,18 +278,43 @@ class AiocqhttpBackend:
         bot = self._client()
         if bot is None:
             return False
+
+        params: dict[str, Any] = {"message_id": handle.message_id}
+        self_id = getattr(handle, "self_id", None)
+        if self_id:
+            # aiocqhttp addresses an API call by ``self_id`` when more than one
+            # account is connected; without it the call cannot be routed.
+            # AstrBot sends ``self_id`` on every message too, so protocol ends
+            # already tolerate the extra parameter.
+            params["self_id"] = self_id
+
         try:
-            await bot.call_action(_DELETE_ACTION, message_id=handle.message_id)
+            await bot.call_action(_DELETE_ACTION, **params)
             return True
         except Exception as exc:
-            if self._logger is not None:
-                try:
-                    self._logger.debug(
-                        f"astrbot_plugin_roll: recall failed ({type(exc).__name__}: {exc})"
-                    )
-                except Exception:
-                    pass
+            self._log_failure(exc)
             return False
+
+    def _log_failure(self, exc: BaseException) -> None:
+        """Report a refused deletion, once explaining an unroutable account."""
+
+        if self._logger is None:
+            return
+        try:
+            self._logger.debug(
+                f"astrbot_plugin_roll: recall failed ({type(exc).__name__}: {exc})"
+            )
+            if type(exc).__name__ == "ApiNotAvailable" and not self._routing_warned:
+                self._routing_warned = True
+                self._logger.warning(
+                    "astrbot_plugin_roll: delete_msg could not be routed to an "
+                    "account. With several QQ accounts on one aiocqhttp adapter "
+                    "the call needs the self_id captured with the message; a "
+                    "message sent before this plugin hooked the account, or sent "
+                    "without self_id, cannot be recalled.",
+                )
+        except Exception:
+            pass
 
     # -- internals -----------------------------------------------------
     def _client(self) -> Any:
@@ -294,7 +350,12 @@ class AiocqhttpBackend:
         if session_id is None:
             return
         self._store.record(
-            routing_key(self._platform_id, is_group, session_id),
+            routing_key(
+                self._platform_id,
+                is_group,
+                session_id,
+                kwargs.get("self_id"),
+            ),
             message_id,
         )
 
