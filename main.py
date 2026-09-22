@@ -17,7 +17,7 @@ from .roll.core import RollService
 from .roll.recall import RecallStore, make_backend
 
 PLUGIN_NAME = "astrbot_plugin_roll"
-PLUGIN_VERSION = "1.0.1"
+PLUGIN_VERSION = "1.0.2"
 PLUGIN_DESC = "输入 /roll 重新生成上一条回复；QQ(aiocqhttp) 下尽力撤回旧消息，其它平台自动跳过"
 PLUGIN_AUTHOR = "insolitude610"
 PLUGIN_REPO = "https://github.com/insolitude610/astrbot_plugin_roll_message"

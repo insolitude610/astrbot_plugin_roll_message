@@ -1,8 +1,8 @@
 # astrbot_plugin_roll 设计文档
 
 > 状态：**已实现并在本机 AstrBot 4.28.1 + NapCat(aiocqhttp) 上端到端实测通过**
-> 目标框架：AstrBot ≥ 4.5.0 / Python 3.10+ · 零第三方依赖 · Windows / Linux / macOS 通用
-> （实测环境：AstrBot 4.28.1 + NapCat。最低版本 4.5.0 是逐版本核对源码得出的：该版本起 `event.request_llm()` 支持 `conversation` 参数、`ProviderRequest.conversation` 存在、框架会按本轮消息重写会话历史；4.0.0 起已有插件处理器 `yield` `ProviderRequest` 的管道支持、`should_call_llm`、`plain_result`、`get_client()`、配置注入与 `_conf_schema.json`。）
+> 目标框架：AstrBot ≥ 4.1.0 / Python 3.10+ · 零第三方依赖 · Windows / Linux / macOS 通用
+> （实测环境：AstrBot 4.28.1 + NapCat。**版本下限是逐版本核对 4.0.0–4.28.0 全部 28 个小版本源码得出的**：`request_llm` / `ProviderRequest` 的 `audio_urls` 到 **4.23.0** 才存在，且旧版没有 `**kwargs` 兜底，所以插件改为按需传该参数、被拒时降级重试；`filter.on_platform_loaded` 始于 **4.1.0**，是剩下的最早门槛。其余用到的 API——`request_llm(conversation=)`、`ProviderRequest.conversation`、按 `req.conversation.history` 取 contexts 并回写历史、`command(alias=)`、`register(..., repo=)`、`Context.conversation_manager`、`get_curr_conversation_id`、`PlatformMetadata.id`、`get_client()`、`_conf_schema.json` 与配置注入、`initialize()/terminate()` 生命周期——自 4.0.0 起即存在。4.1–4.22 只做过调用兼容性核对，未真机验证。）
 > 交付位置：本仓库（部署副本：`<AstrBot>/data/plugins/astrbot_plugin_roll`）
 
 ---
@@ -132,6 +132,7 @@ recall_old 开启
 9. **平台**：Telegram / Discord 等平台 v1 不实现撤回。
 10. **合成消息过滤**：框架注入的 `role=user` 提示词按已导入的常量与镜像的中文字面量过滤；若未来版本改动文案，理论上可能被当成用户的最后一轮——但由于插件不写库，其影响仅限那一次重生成。
 11. **账号未知的发送**：框架的 `bot.send(event)` 兜底路径与主动推送不携带 `self_id`，这类消息落在无账号桶里。单账号下照常可撤回；多账号下 `delete_msg` 无法路由（记一条 warning，消息保留）。
+12. **低版本 AstrBot（4.1–4.22）**：这些版本走的是 pre-agent 的 `llm_request` 管道，历史回写机制在 4.5.0 上确认存在，但插件只在这些版本的**调用兼容性**上做过核对（参数表、符号存在性），没有真机验证；遇到异常优先升级 AstrBot。
 
 ---
 
@@ -140,7 +141,7 @@ recall_old 开启
 ### 5.1 离线单测（不 import AstrBot，任意 OS 可跑）
 
 ```bash
-python -m pytest tests -q          # 85 passed
+python -m pytest tests -q          # 87 passed
 python -m compileall -q main.py roll tests
 ```
 

@@ -3,9 +3,9 @@ display_name: 重新生成 (/roll)
 short_desc: 发一条 /roll 换掉 bot 上一条回复，QQ 下顺手撤回旧消息。
 desc: 不满意 bot 的回复就发一个 /roll：插件会用同一段上下文重走一遍正常的回复流程（人格、工具、知识库、流式、转图/TTS 都在），QQ(aiocqhttp) 下还会撤回旧的平台消息，其它平台自动跳过。支持管理员 / 所有人权限切换。
 author: insolitude610
-version: 1.0.1
+version: 1.0.2
 repo: https://github.com/insolitude610/astrbot_plugin_roll_message
-astrbot_version: ">=4.5.0"
+astrbot_version: ">=4.1.0"
 support_platforms:
   - aiocqhttp
   - telegram

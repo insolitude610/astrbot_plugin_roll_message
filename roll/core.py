@@ -343,12 +343,31 @@ class RollService:
     # request / tip construction
     # ------------------------------------------------------------------
     def _build_request(self, event: Any, prepared: _Prepared) -> Any:
-        return event.request_llm(
-            prompt=prepared.prompt,
-            image_urls=list(prepared.image_urls),
-            audio_urls=list(prepared.audio_urls),
-            conversation=prepared.conv_copy,
-        )
+        """Build the regeneration request.
+
+        ``audio_urls`` only exists from AstrBot 4.23.0 on, and older builds take
+        no ``**kwargs``, so the keyword is sent only when it carries something.
+        A history that still holds audio parts on such a build (a downgrade)
+        falls back to a text-only regeneration instead of failing the command.
+        """
+
+        kwargs: dict[str, Any] = {
+            "prompt": prepared.prompt,
+            "image_urls": list(prepared.image_urls),
+            "conversation": prepared.conv_copy,
+        }
+        audio_urls = list(prepared.audio_urls)
+        if not audio_urls:
+            return event.request_llm(**kwargs)
+        try:
+            return event.request_llm(audio_urls=audio_urls, **kwargs)
+        except TypeError:
+            self._log(
+                "warning",
+                "this AstrBot build rejects request_llm(audio_urls=...); "
+                "regenerating without the audio of that turn",
+            )
+            return event.request_llm(**kwargs)
 
     def _make_tip(self, event: Any) -> Any:
         return event.plain_result(NO_REPLY_TIP)

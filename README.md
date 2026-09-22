@@ -6,7 +6,7 @@
 
 给 bot 的回复配一个「重新生成」。
 
-[![AstrBot](https://img.shields.io/badge/AstrBot-%3E%3D4.5.0-orange?style=flat-square)](https://github.com/AstrBotDevs/AstrBot)
+[![AstrBot](https://img.shields.io/badge/AstrBot-%3E%3D4.1.0-orange?style=flat-square)](https://github.com/AstrBotDevs/AstrBot)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 
@@ -61,12 +61,14 @@ git clone https://github.com/insolitude610/astrbot_plugin_roll_message.git astrb
 
 ## 版本要求
 
-- 需要 **AstrBot 4.5.0 或更高**。
+- 需要 **AstrBot 4.1.0 或更高**（`filter.on_platform_loaded` 从 4.1.0 开始才有）。
+- **4.23.0 及以上已实测**；4.1–4.22 只做过逐版本源码调用兼容性核对，没有真机跑过，遇到问题优先升级 AstrBot。
 - Python 3.10 以上，不用装依赖，Windows / macOS / Linux 都行。
-- Agent 执行器保持默认的 `local`。换成第三方的，历史由它自己管，`/roll` 就不一定准了，启动时也会收到一条 warning。
+- Agent 执行器保持默认的 `local`。换成第三方的，历史由它自己管，`/roll` 就不一定准了，启动时也会收到一条 warning（4.19 以前的版本没有 Agent 执行器，这条不适用）。
 
 ## 更新日志
 
+- **1.0.2** —— 版本下限修正：`audio_urls` 改为按需传参（AstrBot 4.23.0 才有该参数，旧版没有 `**kwargs`，原来无条件传会直接 `TypeError`，而撤回已先执行——旧消息被删、新回复不来）。同时把 `astrbot_version` 从错误的 `>=4.5.0` 修正为 `>=4.1.0`。
 - **1.0.1** —— 多账号修复：撤回时带上消息所属的 `self_id`，一个 aiocqhttp 适配器下挂多个 QQ 号也能正确撤回；消息句柄按账号隔离，撤回无法路由时日志会说明原因。
 - **1.0.0** —— 首次发布。
 
