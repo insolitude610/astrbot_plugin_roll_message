@@ -3,7 +3,7 @@ display_name: 重新生成 (/roll)
 short_desc: 发一条 /roll 换掉 bot 上一条回复，QQ 下顺手撤回旧消息。
 desc: 不满意 bot 的回复就发一个 /roll：插件会用同一段上下文重走一遍正常的回复流程（人格、工具、知识库、流式、转图/TTS 都在），QQ(aiocqhttp) 下还会撤回旧的平台消息，其它平台自动跳过。支持管理员 / 所有人权限切换。
 author: insolitude610
-version: 1.0.2
+version: 1.0.3
 repo: https://github.com/insolitude610/astrbot_plugin_roll_message
 astrbot_version: ">=4.1.0"
 support_platforms:
@@ -24,4 +24,7 @@ tags:
   - QQ
 social_link: https://github.com/insolitude610
 # 头图：插件市场和 WebUI 读的是插件根目录的 logo.png（AstrBot 固定文件名，1:1），
-# 别改名；README 顶部的动图是 assets/logo.gif，同一张图的动画版。
+# 别改名；README 顶部的动图是 assets/logo.gif，同一段动画的 GIF 源。
+# logo.png 本身是 APNG（动画 PNG）：AstrBot 只认这个文件名，但 PNG 容器能装动画，
+# 而 FileResponse 按扩展名发 image/png、浏览器会播 APNG。首帧与旧的静态图逐像素一致，
+# 因此不支持 APNG 的地方（缩略图、旧解码器）退化后和以前完全一样。

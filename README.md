@@ -68,6 +68,7 @@ git clone https://github.com/insolitude610/astrbot_plugin_roll_message.git astrb
 
 ## 更新日志
 
+- **1.0.3** —— 头图改成会动的：`logo.png` 由静态图换成 **APNG**（代码里叫 animated PNG，PNG 容器本身就支持动画）。AstrBot 插件页只读 `logo.png` 这个固定文件名，所以不能直接放 GIF；换成 APNG 后浏览器照常播放，首帧与旧静态图逐像素一致，不支持 APNG 的地方退化成原来的样子。素材用仓库里的 `assets/logo.gif`（240×240、32 帧、0.96s 循环）转出，239 KiB。
 - **1.0.2** —— 版本下限修正：`audio_urls` 改为按需传参（AstrBot 4.23.0 才有该参数，旧版没有 `**kwargs`，原来无条件传会直接 `TypeError`，而撤回已先执行——旧消息被删、新回复不来）。同时把 `astrbot_version` 从错误的 `>=4.5.0` 修正为 `>=4.1.0`。
 - **1.0.1** —— 多账号修复：撤回时带上消息所属的 `self_id`，一个 aiocqhttp 适配器下挂多个 QQ 号也能正确撤回；消息句柄按账号隔离，撤回无法路由时日志会说明原因。
 - **1.0.0** —— 首次发布。
