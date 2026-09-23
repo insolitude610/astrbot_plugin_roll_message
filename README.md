@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/logo.gif" width="150" alt="astrbot_plugin_roll">
+<img src="https://raw.githubusercontent.com/insolitude610/astrbot_plugin_roll_message/main/assets/logo.gif" width="150" alt="astrbot_plugin_roll">
 
 # astrbot_plugin_roll
 
