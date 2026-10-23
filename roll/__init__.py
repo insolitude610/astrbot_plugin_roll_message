@@ -8,4 +8,4 @@ wiring.
 
 from __future__ import annotations
 
-__all__ = ["core", "history", "recall"]
+__all__ = ["context", "core", "history", "recall"]

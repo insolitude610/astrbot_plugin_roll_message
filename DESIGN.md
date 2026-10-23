@@ -53,6 +53,7 @@ AstrBot 4.28.x 内置指令没有 `/roll`；WebUI 聊天页的「重新生成」
      c. 读会话 → 裁剪历史 → 生成 conversation 副本、抓取待撤回消息 → 释放锁
 5. **立即撤回**旧的平台消息（在请求 LLM 之前；仅 QQ）
 6. yield event.request_llm(prompt=重建的 prompt, image_urls=…, audio_urls=…, conversation=副本)
+   └ 先把被裁掉的尾部记到事件上（`context.remember`）；AstrBot 4.29+ 由 on_llm_request 钩子再删一次（见 3.7）
 7. 生成器恢复后（回复已送达、历史已落库）→ 只做一次诊断：本轮是否真的落库，没有则记 warning
 ```
 
@@ -74,6 +75,8 @@ entry[i] 变成 prompt：
 ```
 
 框架随后会把 `contexts + [user(prompt), assistant(新回复)]` 整体落库，因此最终历史等价于「原用户消息 + 新回复」，`/roll` 这三个字永不进入上下文。注意：其它插件可能在落库前给 `req.prompt` 加上装饰（例如已装的 `astrbot_plugin_llmperception` 会前置「[发送时间: …]」头），所以历史里的用户条目是**同一条消息的装饰版本**，插件不会改写用户内容。
+
+> AstrBot **4.29.0 起**，框架会在 `on_llm_request` 之前按 `cid` 从数据库重载会话并覆盖 `req.contexts`，这段裁剪会被丢弃。3.7 的钩子负责在重载之后把裁剪恢复回来；4.28 及以前不需要它（自动 no-op）。
 
 ### 3.4 撤回层（`roll/recall.py`）
 
@@ -117,6 +120,21 @@ recall_old 开启
 
 未知的 `permission_mode` 取值会回落到 `admin`（失败方向安全）。
 
+### 3.7 AstrBot 4.29 的会话重载与恢复（`roll/context.py`）
+
+4.28.2 及以前的 `collect_initial_request` 信任插件传入的会话副本：`req.contexts = json.loads(req.conversation.history)`。4.29.0 起改为按 `req.conversation.cid` 从数据库重新加载会话并覆盖 `req.contexts`（源码注释：让排队中的轮次带上等待期间写入的回复；`astr_main_agent.py:1507-1523`）。于是 3.3 的裁剪被丢弃：模型上下文仍是完整历史（含被替换的旧回复），框架再把同一句用户消息追加一次，落库后每 `/roll` 多出一轮——旧平台消息仍被撤回，表层看不出异常，只有数据库与模型上下文被污染。
+
+修复不写数据库、不改框架：
+
+* `handle` 在 `yield` 前调用 `context.remember(event, before_history, new_history)`，把「被裁掉的尾部」挂到事件上（`event.set_extra`）。
+* 插件注册 `on_llm_request` 钩子，在框架重载之后、Agent Runner 读取 `req.contexts` 之前（`internal.py:307` / `tool_loop_agent_runner.py:315`）调用 `context.restore`：在 `req.contexts` 里找到「裁剪前缀 + 被裁尾部」**整段快照**的最新一次出现，只删除该命中里的尾部。重复句 / 重复轮次不会误删；快照缺失、尾部被改写或尾部之后已经出现新轮次时一律保守不动（后两者记 warning）。
+* 4.28 及以前 `req.contexts` 本来就是裁剪后的，尾部不存在 → 返回 `already_trimmed`，不改任何东西，因此同一份代码覆盖两个时代。persona 的 `begin_dialogs`（`astr_main_agent.py:603-604`）与其它插件追加的条目都保留。
+* 钩子用 `priority=1000` 注册（AstrBot 按 priority 降序分发，`star_handler.py:19-26`）。实测安装树里会修改 `req.contexts` 的钩子（livingmemory、mnemosyne）都是默认 0；`meme_manager` 的 99999 只改 `system_prompt`。所以本插件在它们之前把上下文恢复成 4.28 的形状，它们看到的输入与旧版一致。**不变量：任何会修改 `req.contexts` 的 on_llm_request 钩子都不应排在 1000 之前**；若未来出现这种插件，恢复会退化为 `unmatched` 警告，而不是静默删错。
+* 尾部被改写、`contexts` 不是列表、匹配不到时会保守不动并记 warning（能确认已是裁剪形态的 `already_trimmed` 除外；判定只在裁剪前缀之后找原文，避免用户重复同一句话时误报；纯媒体消息且尾部被改写时无法用文本区分，按 `already_trimmed` 处理，不误报）：宁可这一轮退化成「追加」，也不猜着删错历史。
+* 若匹配到的尾部之后已经出现新的对话轮次（`user`/`assistant`/`tool` 条目），同样不删——那说明快照之后历史又前进了，删掉它会丢掉更新的轮次；框架追加的 `system` 条目（文件抽取结果等）不算新轮次。
+* 旧版本若拒绝 `on_llm_request(priority=...)` 参数，注册降级为默认 priority 并记 warning，插件不会因此加载失败（恢复退化为尽力而为）。
+* 事件标记在 `handle` 的 `finally` 里清除；钩子读到标记后也会立即清除，不会串到同一事件的后续请求。
+
 ---
 
 ## 4. 已知限制与残余风险
@@ -133,6 +151,8 @@ recall_old 开启
 10. **合成消息过滤**：框架注入的 `role=user` 提示词按已导入的常量与镜像的中文字面量过滤；若未来版本改动文案，理论上可能被当成用户的最后一轮——但由于插件不写库，其影响仅限那一次重生成。
 11. **账号未知的发送**：框架的 `bot.send(event)` 兜底路径与主动推送不携带 `self_id`，这类消息落在无账号桶里。单账号下照常可撤回；多账号下 `delete_msg` 无法路由（记一条 warning，消息保留）。
 12. **低版本 AstrBot（4.1–4.22）**：这些版本走的是 pre-agent 的 `llm_request` 管道，历史回写机制在 4.5.0 上确认存在，但插件只在这些版本的**调用兼容性**上做过核对（参数表、符号存在性），没有真机验证；遇到异常优先升级 AstrBot。
+13. **AstrBot 4.29+ 的上下文重载**：恢复依赖 `on_llm_request` 在「框架重载之后、Runner 读取之前」触发（4.29.1 已用真实框架契约测试确认）。若未来版本把重载挪到钩子之后、或再次改写 `req.contexts`，恢复会失效并记 `unmatched` warning，行为退化为「追加一轮」，不会崩溃或删错历史。契约由 `tests/test_429_reload_contract.py` 守护（设 `ASTRBOT_SOURCE_PATH` 运行）。
+14. **高优先级上下文钩子**：若另一个插件以 >1000 的 priority 在 `on_llm_request` 里修改 `req.contexts`，本恢复会匹配不到并记 warning，`/roll` 退化为「追加一轮」（数据库多一轮）——不会删错，但也不再是替换。这是 3.7 不变量的反向风险，选择「保守不删」而不是「猜着删」。
 
 ---
 
@@ -141,15 +161,20 @@ recall_old 开启
 ### 5.1 离线单测（不 import AstrBot，任意 OS 可跑）
 
 ```bash
-python -m pytest tests -q          # 87 passed
+python -m pytest tests -q          # 115 passed, 3 skipped（跳过的是真实框架契约测试）
 python -m compileall -q main.py roll tests
+
+# 真实框架契约测试（需要 AstrBot 源码 + 其依赖；设 ASTRBOT_SOURCE_PATH 后运行）
+$env:ASTRBOT_SOURCE_PATH = "D:\AstrBotLauncher-0.1.5.5\AstrBot"
+python -m pytest tests/test_429_reload_contract.py -q   # 3 passed
 ```
 
-覆盖：裁剪/prompt 重建表驱动用例（字符串、多模态、think、工具调用尾部、合成消息、无 assistant、全空、首条即 user、非列表历史）、权限矩阵、入口必设 `call_llm`、静默/提示分支、会话锁的获取顺序与真实超时、**撤回必须发生在请求发出之前**的顺序断言、并发消息导致的「未确认本轮」诊断、TTS 突发、键类型归一化、aiocqhttp 包装器（5 个发送动作、非发送动作忽略、无 message_id 忽略、异常透传、返回值直通、幂等安装与还原、`__getattr__` 陷阱）、以及「插件绝不调用 `update_conversation`」的不变量。
+覆盖：裁剪/prompt 重建表驱动用例（字符串、多模态、think、工具调用尾部、合成消息、无 assistant、全空、首条即 user、非列表历史）、权限矩阵、入口必设 `call_llm`、静默/提示分支、会话锁的获取顺序与真实超时、**撤回必须发生在请求发出之前**的顺序断言、并发消息导致的「未确认本轮」诊断、TTS 突发、键类型归一化、aiocqhttp 包装器（5 个发送动作、非发送动作忽略、无 message_id 忽略、异常透传、返回值直通、幂等安装与还原、`__getattr__` 陷阱）、「插件绝不调用 `update_conversation`」的不变量，以及 AstrBot 4.29 上下文恢复（快照整段匹配与尾部删除、重复句 / 重复轮次不误删、persona `begin_dialogs` 与追加条目保留、工具调用尾部、非列表上下文、标记的设置/清理/异常路径、尾部之后出现新轮次不误删、快照缺失或改写时保守不动）。
 
 ### 5.2 真实对象与真机实测
 
 * 真实 `Conversation`（dataclass）/ `ProviderRequest` / `aiocqhttp.CQHttp` 实例上的包装器安装、捕获、删除与还原均已验证。
+* **AstrBot 4.29.1 契约实测（1.0.4）**：本机 4.29.1（Python 3.12.2）上用真实 `collect_initial_request` + 真实 `ProviderRequest` 复现「插件裁剪 2 条 → 框架重载为 4 条」，随后把事件交给真实 `call_event_hook` 按 priority 分发到插件钩子，断言 `req.contexts` 恢复为裁剪后的 2 条；并断言钩子以 priority 1000 注册（`tests/test_429_reload_contract.py`，3 passed）。上游 v4.28.2 无此重载、v4.29.0/v4.29.1 有，已按 tag 逐行比对。未在真机聊天里重跑 `/roll`（需要用户发一条消息），因此「落库不重复」由契约测试 + 落库代码路径（`internal.py:503-590` 使用 `run_context.messages`）与取消/异常分支确认。
 * 真实会话历史（108 条）裁剪出 106 条前缀 + 2407 字符 prompt，后接恰好一条 assistant。
 * **真机（AstrBot 4.28.1 + NapCat）第一轮**（当时是「生成后再撤回」的修订版）：15:11 用户消息 → 15:11 旧回复 → 15:12:58 `/roll` → 15:13:39 新回复；数据库核对显示历史中旧回复已被替换、新回复就位、`/roll` 未出现在任何会话的任何条目中；用户在 QQ 侧确认旧消息**被成功撤回**。
 * **真机（本轮最终修订版，撤回先于生成）**：`data/logs/astrbot.log` 中
@@ -170,6 +195,7 @@ python -m compileall -q main.py roll tests
 * 最终质量门禁第 3 轮：确认上述文档修正完成、运行时无功能缺陷，但发现一个 **P0 打包问题**——插件目录里混入了 `data/`（内含 AstrBot 生成的 `cmd_config.json` 与 `t2i_templates/`）：根因是**验证脚本自己**在插件目录内 `import astrbot`，于是 AstrBot 按 cwd 建了 `data/`。已删除两份、加入 `.gitignore`、README 增加警告，并改用 `/MIR` 重新部署。
 * 最终质量门禁确认轮：P0 与「撤回后未遗忘 handle」均已确认修复，另发现 `_last_at` 清理**在 `cooldown_seconds=0` 时不可达**（清理调用点位于 `_is_cooling_down` 的提前返回之后），已把清理移到 `handle()` 入口无条件执行并补测。
 * 最终质量门禁窄确认轮：**VERDICT: PASS**（评审自行做了变异测试——把清理函数替换为空实现后测试确实失败，证明用例非空洞）。
+* **4.29 兼容修复（1.0.4）方案门禁**：独立评审（不同模型代际）核实了「4.29 重载丢弃裁剪」的源码与运行期证据、`on_llm_request` 边界、priority 分发顺序与全部已装钩子的触点，**VERDICT: PASS**；4 项修订已吸收——标记存在但未恢复时记 warning、新增真实框架契约测试、补齐标记生命周期与重复/工具尾部等离线用例、priority 注册降级并把「>1000 上下文钩子是风险」写进 3.7/§4。
 
 
 ---

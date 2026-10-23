@@ -35,6 +35,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from . import context as context_mod
 from . import history as history_mod
 from .recall import NullBackend, RecallStore, routing_key
 
@@ -153,7 +154,15 @@ class RollService:
                 # Withdraw the old message FIRST so it disappears the moment the
                 # user asks, instead of lingering until the new reply arrives.
                 await self._withdraw_old(event, umo, outcome)
-                yield self._build_request(event, outcome)
+                request = self._build_request(event, outcome)
+                # AstrBot 4.29+ reloads the conversation from the database and
+                # overwrites req.contexts, discarding the trimmed copy above.
+                # Remember what was trimmed so the on_llm_request hook can
+                # re-apply it (roll/context.py).
+                context_mod.remember(
+                    event, outcome.before_history, outcome.new_history
+                )
+                yield request
                 if not await self._history_advanced(umo, outcome):
                     self._log(
                         "warning",
@@ -166,6 +175,7 @@ class RollService:
                 if self._tips_enabled():
                     yield self._make_tip(event)
         finally:
+            context_mod.discard(event)
             self._inflight.pop(umo, None)
 
     # ------------------------------------------------------------------

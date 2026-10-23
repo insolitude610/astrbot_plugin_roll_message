@@ -12,15 +12,50 @@ from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, register
 
+from .roll import context as roll_context
 from .roll import history as history_module
 from .roll.core import RollService
 from .roll.recall import RecallStore, make_backend
 
 PLUGIN_NAME = "astrbot_plugin_roll"
-PLUGIN_VERSION = "1.0.3"
+PLUGIN_VERSION = "1.0.4"
 PLUGIN_DESC = "输入 /roll 重新生成上一条回复；QQ(aiocqhttp) 下尽力撤回旧消息，其它平台自动跳过"
 PLUGIN_AUTHOR = "insolitude610"
 PLUGIN_REPO = "https://github.com/insolitude610/astrbot_plugin_roll_message"
+
+#: AstrBot 4.29+ reloads the bound conversation from the database before
+#: ``on_llm_request`` fires, discarding the trimmed history that /roll prepared
+#: (see ``roll/context.py``).  The hook below re-applies the trim, so it has to
+#: run *before* any other plugin's on_llm_request handler mutates
+#: ``req.contexts`` — otherwise those plugins would see the reloaded (untrimmed)
+#: history and their index-based bookkeeping would differ from pre-4.29 runs.
+#: AstrBot dispatches handlers by descending priority, and every context-mutating
+#: handler in the installed trees uses the default 0, so 1000 is early enough.
+#: A future handler with a priority above 1000 that appends a conversation turn
+#: would make the restore refuse (warning, no deletion); /roll then degrades to
+#: appending a duplicate turn instead of corrupting history.
+ROLL_CONTEXT_PRIORITY = 1000
+
+
+def _register_restore(handler, name: str = PLUGIN_NAME):
+    """Register the context-restore hook at :data:`ROLL_CONTEXT_PRIORITY`.
+
+    The ``TypeError`` branch is defence in depth: the registrar is
+    ``def register_on_llm_request(**kwargs)`` in every AstrBot tree inspected,
+    but if a build rejects the keyword the plugin must still import; the hook
+    then lands at priority 0, after the other on_llm_request handlers, and the
+    restore becomes best-effort instead of failing the whole plugin.
+    """
+
+    try:
+        return filter.on_llm_request(priority=ROLL_CONTEXT_PRIORITY)(handler)
+    except TypeError:
+        logger.warning(
+            f"{name}: this AstrBot build rejects on_llm_request(priority=...); "
+            "the /roll context restore will follow plugin load order and may "
+            "miss other plugins' context edits.",
+        )
+        return filter.on_llm_request()(handler)
 
 
 def _load_symbol(module_name: str, attr_name: str) -> Any:
@@ -137,6 +172,42 @@ class RollPlugin(Star):
         """Install the recall backends for platforms that are already connected."""
 
         self._install_backends()
+
+    @_register_restore
+    async def _restore_roll_context(self, event: AstrMessageEvent, req: Any) -> None:
+        """Re-apply the history trim that AstrBot 4.29 reloads away.
+
+        ``collect_initial_request`` replaces ``req.contexts`` with the persisted
+        conversation before this hook runs (``astr_main_agent.py:1507-1523`` in
+        4.29.x), so the plugin removes the replaced turn again here - after the
+        reload, before the runner reads the contexts and before other plugins'
+        on_llm_request handlers see them.  On older AstrBot builds the contexts
+        are already trimmed and this is a no-op.
+        """
+
+        outcome, removed = roll_context.restore(
+            event,
+            getattr(req, "contexts", None),
+        )
+        if outcome == roll_context.RESTORED:
+            logger.debug(
+                f"{PLUGIN_NAME}: restored the trimmed /roll context "
+                f"({removed} entries removed again after the framework reload)",
+            )
+        elif outcome == roll_context.UNMATCHED:
+            logger.warning(
+                f"{PLUGIN_NAME}: could not match the previous turn in the "
+                "request context; /roll will append a new turn instead of "
+                "replacing the old one. The AstrBot request pipeline may have "
+                "changed again, another plugin may have rewritten req.contexts, "
+                "or the conversation advanced while /roll was queued.",
+            )
+        elif outcome == roll_context.INVALID:
+            logger.warning(
+                f"{PLUGIN_NAME}: the LLM request has no usable contexts list; "
+                "/roll cannot replace the previous turn on this AstrBot build "
+                "(third-party agent runner or a changed request pipeline).",
+            )
 
     @filter.on_platform_loaded()
     async def _on_platform_loaded(self) -> None:
